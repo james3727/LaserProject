@@ -7,13 +7,12 @@ public class GameController : MonoBehaviour
 {
     public TileType[] tileTypes;
     public Text startText;
-    public Text countText;
     public Text timerDisplay;
+    public Text levelDisplay;
+    public Text itemDisplay;
     public GameObject pickUps;
     public GameObject rock;
     public GameObject[] players = new GameObject[1];
-
-    const int MAXROCKNUM = 35;  // 16 is perfect for the first level 
 
     struct emptySpace
     {
@@ -22,19 +21,31 @@ public class GameController : MonoBehaviour
         int zLocation;
         public int getXLocation() { return xLocation; }
         public int getZLocation() { return zLocation; }
+        public bool equalTo(emptySpace other)
+        {
+            if (this.xLocation == other.getXLocation() && this.zLocation == other.getZLocation())
+                return true;
+            return false;
+        }
     }
-
-    private float timeBetweenLasers;                // duration between the lasers
-    private float lazertimer = 0.0f;
+    // varibles changing by level
+    private int maxRockNum;  // 16 is perfect for the first level 
+    private int itemGoal;
+    private int groupingMax;
     private float timeLimit;
-    private float gameTimer;
     private int level;
+    private float timeBetweenLasers;                // duration between the lasers
+
+    private float lazertimer = 0.0f;
+    private int currentItemNum;
+    private float gameTimer;
     private int numOfLasers;
     private int mapSizeX = 13;
     private int mapSizeZ = 13;
-    private GameObject[] wall;                      // array of walls in the game
-    private GameObject[] rocks;                     // array of rocks in the game
+    private GameObject[] wall;                                  // array of walls in the game
+    private List<GameObject> rocks = new List<GameObject>();    // array of rocks in the game
     private List<emptySpace> emptyBlocks=  new List<emptySpace>();
+    private Dictionary<string,GameObject> items = new Dictionary<string,GameObject>();
     private bool firstItem;
     private bool gameStart = false;
 
@@ -46,24 +57,21 @@ public class GameController : MonoBehaviour
     // Use this for initialization
     void Start()
     {
-        setTimeLimit(30.0f);
-        gameTimer = getTimeLimit();
+        level = 0;
+        //setupLevel();
         startText.text = "Press Spacebar to start!";
-        level = 1;
-        timeBetweenLasers = 4.0f;                   // duration between the lasers
         firstItem = true;                           // flag for the first item to be put down
-        numOfLasers = 4;                            // number of lasers to be fired at a time
         generateAllTiles();
         generateWallTileVisual();
-        generateRocks(level);                       // Level one
         generatePlayer();                           // creates player (always do this after generating rocks)
-        //showList();
     }
 
     void Update()
     {
         if(!gameStart && Input.GetKeyDown(KeyCode.Space))
         {
+            setupLevel();
+            generateRocks();
             startText.text = "";
             setGameStart(true);
         }
@@ -76,18 +84,17 @@ public class GameController : MonoBehaviour
                 destoryAllRocks();                                                   // reseting for next round
                 gameStart = false;
                 lazertimer = 0;
-                gameTimer = 0;
                 gameTimer = getTimeLimit();
                 startText.text = "Press Spacebar to start!";
             }
             displayTime();                                                      // displays time
             if (lazertimer > timeBetweenLasers && gameStart)                                   // 4 seconds between the lasers
             {
-                if (firstItem)
+                /*if (firstItem)
                 {
                     firstItem = false;
                     itemSpawn();
-                }
+                }*/
                 lazertimer = 0;
                 generateLasers(numOfLasers);
             }
@@ -161,62 +168,106 @@ public class GameController : MonoBehaviour
         }
     }
 
-    void generateRocks(int level)                           // generates rocks depending on different level
+    void generateRocks()                           // generates rocks depending on different level
     {
-        if (level < 6)
+        int i = 0;
+        while (i < maxRockNum)                                                                    // spawn 10 rocks
         {
-            rocks = new GameObject[MAXROCKNUM];
-            int i = 0;
-            while (i < MAXROCKNUM)                                                                    // spawn 10 rocks
+            int randomLocation = Mathf.FloorToInt(Random.Range(1, emptyBlocks.Count - 0.0001f));
+            emptySpace thisSpace = emptyBlocks[randomLocation];
+            
+            if (checkPlayerOverlap(thisSpace.getXLocation(), thisSpace.getZLocation())) // checking to see if it overlaps with players AND if this is a empty spot                                                    // avoiding overlaps
             {
-                int randomLocation = Mathf.FloorToInt(Random.Range(1, emptyBlocks.Count - 0.0001f));
-                emptySpace thisSpace = emptyBlocks[randomLocation];
-                if (wallTiles[thisSpace.getXLocation(), thisSpace.getZLocation()] == 5)                                                     // avoiding overlaps
+                wallTiles[thisSpace.getXLocation(), thisSpace.getZLocation()] = 6;    // try putting the rock in this position
+                if (checksForLegalRockSpawn())
+                {        // check to see if it traps any space
+                    GameObject currentRock = (GameObject)Instantiate(rock, new Vector3(thisSpace.getXLocation(), 0.5f, thisSpace.getZLocation()), Quaternion.identity);
+                    rocks.Add(currentRock);
+                    emptyBlocks.Remove(thisSpace);
+                    i++;
+                    int passingNum = maxRockNum - i;
+                    if (maxRockNum - i > groupingMax)
+                        passingNum = groupingMax;
+                    i = i + generateGroupOfRocks(passingNum, thisSpace.getXLocation(), thisSpace.getZLocation());
+                }
+                else
                 {
-                    wallTiles[thisSpace.getXLocation(), thisSpace.getZLocation()] = 6;    // try putting the rock in this position
-                    if (checksForLegalRockSpawn())
-                    {        // check to see if it traps any space
-                        GameObject currentRock = (GameObject)Instantiate(rock, new Vector3(thisSpace.getXLocation(), 0.5f, thisSpace.getZLocation()), Quaternion.identity);
-                        rocks[i] = currentRock;
-                        emptyBlocks.Remove(thisSpace);
-                        i++;
-                    }
-                    else
-                    {
-                        wallTiles[thisSpace.getXLocation(), thisSpace.getZLocation()] = 5;        // if it does traps a space don't put the rock there
-                    }
+                    wallTiles[thisSpace.getXLocation(), thisSpace.getZLocation()] = 5;        // if it does traps a space don't put the rock there
                 }
             }
         }
-        /*
-        else if (level < 11)
+    }
+
+    bool checkPlayerOverlap(int x, int z)
+    {
+        bool LegalSpot = true;
+        for (int i = 0; i < players.Length; i++)
+        {
+            if (dist(x, players[i].transform.position.x, z, players[i].transform.position.z) <= .9f)
+            {
+                LegalSpot = false;
+                break;
+            }
+        }
+        return LegalSpot;
+    }
+    
+    // ways to check item overlap
+
+    void setupLevel()
+    {
+        level++;
+        if (level < 3)
+        {
+            maxRockNum = 40;
+            itemGoal = 7;
+            setTimeLimit(40.0f);
+            groupingMax = 5;
+            timeBetweenLasers = 4.0f;                   // duration between the lasers
+            numOfLasers = 4;                            // number of lasers to be fired at a time
+        }
+        else if (level < 5)
+        {
+            maxRockNum = 35;
+            itemGoal = 10;
+            groupingMax = 3;
+            setTimeLimit(60.0f);
+            timeBetweenLasers = 4.0f;                   // duration between the lasers
+            numOfLasers = 8;                            // number of lasers to be fired at a time
+        }
+        else if (level < 7)
+        {
+            maxRockNum = 70;
+            itemGoal = 10;
+            groupingMax = 3;
+            setTimeLimit(60.0f);
+            timeBetweenLasers = 4.0f;                   // duration between the lasers
+            numOfLasers = 12;                            // number of lasers to be fired at a time
+        }
+        else if (level < 8)
         {
 
         }
-        else if (level < 16)
+        else if (level < 10)
         {
 
         }
-        else if (level < 21)
+        else if (level >= 12)
         {
 
         }
-        else if (level < 26)
-        {
-
-        }
-        else if (level >= 26)
-        {
-
-        }
-    */
+        gameTimer = getTimeLimit();
+        currentItemNum = 0;
+        displayItemCount();
+        displaylevel();
+        itemSpawn();
     }
     
     void destoryAllRocks()
     {
-        for(int i = 0; i < rocks.Length; i++)           // destroy all rocks
+        for(int i = 0; i < rocks.Count; i++)           // destroy all rocks
             Destroy(rocks[i]);
-        rocks = new GameObject[0];
+        rocks.Clear();
         for (int x = 1; x <= mapSizeX; x++){              // resetting the wallTiles
             for(int z = 1; z <= mapSizeZ; z++){
                 emptyBlocks.Add(new emptySpace(x, z));
@@ -225,6 +276,7 @@ public class GameController : MonoBehaviour
                 }
             }
         }
+        removeItem("player1pickUp");                       // removes player 1 pickup
     }
 
     void generatePlayer()                                   // always call this after generateRocks
@@ -262,11 +314,11 @@ public class GameController : MonoBehaviour
         for (int x = 1; x <= mapSizeX; x++)
             for (int z = 1; z <= mapSizeZ; z++)
                 wallTiles[x, z] = 5;                                            // resets all of the wallTiles
-        for (int i = 0; i < rocks.Length; i++)
+        for (int i = 0; i < rocks.Count; i++)
             rocks[i].GetComponent<RockScript>().destorySelf();                  // destorys all of the rocks
     }
     
-    public void itemSpawn()                                 // spawn an item on to the game world
+    public void itemSpawn()                                 // spawn an item on to the game world !!!!!!!!!!!!!!!! USE CHECKPLAYEROVERLAP FUNCTION
     {
         float randx = Random.Range(1, 13f);
         float randz = Random.Range(1, 13f);
@@ -274,7 +326,7 @@ public class GameController : MonoBehaviour
         while (!isGoodLocation)                     // make sure not to over lap item with a rock
         {
             isGoodLocation = true;                  // so far the position is assumed to be good
-            for (int i = 0; i < rocks.Length; i++){
+            for (int i = 0; i < rocks.Count; i++){
                 if (dist(rocks[i].transform.position.x, randx, rocks[i].transform.position.z, randz) < 1.2f){    // if an item is too close to a rock then exit
                     isGoodLocation = false;
                     break;
@@ -294,12 +346,34 @@ public class GameController : MonoBehaviour
                 randz = Random.Range(1, 13f);
             }
         }
-        Instantiate(pickUps, new Vector3(randx, 0.5f, randz), Quaternion.identity);                 // instantiates an item
+        items.Add("player1pickUp",(GameObject)Instantiate(pickUps, new Vector3(randx, 0.5f, randz), Quaternion.identity));                 // instantiates an item
+    }
+
+    public void removeItem(string tag)
+    {
+        GameObject temp = null;
+        if(items.TryGetValue(tag, out temp))
+        {
+            Destroy(temp);
+            items.Remove(tag);
+        }
+        else
+            Debug.Log("ERROR - COULD NOT FIND" + tag);
     }
 
     float dist(float ax, float bx, float az, float bz)      // calculates the distance between two points
     {
         return Mathf.Sqrt(((ax - bx) * (ax - bx)) + ((az - bz) * (az - bz)));
+    }
+
+    void displaylevel()
+    {
+        levelDisplay.text = "Level: " + level;
+    }
+
+    public void displayItemCount()
+    {
+        itemDisplay.text = currentItemNum + " / " + itemGoal;
     }
 
     void displayTime()
@@ -319,15 +393,125 @@ public class GameController : MonoBehaviour
     {
         bool isGood = true;
         int currentX = x;
-        int currentz = z;
+        int currentZ = z;
         int generatedRocks = 0;
-        int direction = Mathf.FloorToInt(Random.Range(0, 5 - 0.00001f)); // 0=N 1=E 2=S 3=W
-        while (isGood || generatedRocks != amount){
+        int direction = Mathf.FloorToInt(Random.Range(0, 4 - 0.00001f)); // 0=N 1=E 2=S 3=W
+        while (isGood && generatedRocks < amount){
+            switch(direction)
+            {
+                case 0:             // North
+                    if (checkPlayerOverlap(currentX, currentZ + 1) && wallTiles[currentX, currentZ + 1] == 5)     // if empty spot exists
+                    {
+                        wallTiles[currentX, currentZ+1] = 6;    // try putting the rock in this position
+                        if (checksForLegalRockSpawn())
+                        {
+                            currentZ++;
+                            insertRock(currentX, currentZ);
+                            generatedRocks++;
+                        }
+                        else
+                        {
+                            wallTiles[currentX, currentZ + 1] = 5;
+                            isGood = false;
+                        }
+                    }
+                    else
+                        isGood = false;
+                    break;
+                case 1:             // East
+                    if (checkPlayerOverlap(currentX + 1, currentZ) && wallTiles[currentX+1, currentZ] == 5)       // if empty spot exists
+                    {
+                        wallTiles[currentX+1, currentZ] = 6;    // try putting the rock in this position
+                        if (checksForLegalRockSpawn())
+                        {
+                            currentX++;
+                            insertRock(currentX, currentZ);
+                            generatedRocks++;
+                        }
+                        else
+                        {
+                            wallTiles[currentX+1, currentZ] = 5;
+                            isGood = false;
+                        }
+                    }
+                    else
+                        isGood = false;
+                    break;
+                case 2:             // South
+                    if (checkPlayerOverlap(currentX, currentZ - 1) && wallTiles[currentX, currentZ-1] == 5)       // if empty spot exists
+                    {
+                        wallTiles[currentX, currentZ - 1] = 6;    // try putting the rock in this position
+                        if (checksForLegalRockSpawn())
+                        {
+                            currentZ--;
+                            insertRock(currentX, currentZ);
+                            generatedRocks++;
+                        }
+                        else
+                        {
+                            wallTiles[currentX, currentZ - 1] = 5;
+                            isGood = false;
+                        }
+                    }
+                    else
+                        isGood = false;
+                    break;
+                case 3:             // West
+                    if (checkPlayerOverlap(currentX - 1, currentZ) && wallTiles[currentX-1, currentZ] == 5)       // if empty spot exists
+                    {
+                        wallTiles[currentX - 1, currentZ] = 6;    // try putting the rock in this position
+                        if (checksForLegalRockSpawn())
+                        {
+                            currentX--;
+                            insertRock(currentX, currentZ);
+                            generatedRocks++;
+                        }
+                        else
+                        {
+                            wallTiles[currentX - 1, currentZ] = 5;
+                            isGood = false;
+                        }
+                    }
+                    else
+                        isGood = false;
+                    break;
+                default:
+                    Debug.Log("incorrect direction");
+                    isGood = false;
+                    break;
+            }
 
-            //if(wallTiles[x,z] ==)
+            if(isGood)  // if the chain of rocks are still good to grow
+            {
+                float probability = Random.Range(0, 10);
+                if (probability < 1.5)      //turn left     15%
+                    direction--;
+                else if (probability > 8.5) // turn right   15%
+                    direction++;
+
+                if (direction < 0)          // fixing directions to keep it between 0-3
+                    direction = direction + 4;
+                else if (direction > 3)
+                    direction = direction % 4;
+            }
         }
         
         return generatedRocks;
+    }
+
+    void insertRock(int x, int z)   // edits wallTiles and emptyBlocks at the same time
+    {
+        wallTiles[x, z] = 6;
+        GameObject currentRock = (GameObject)Instantiate(rock, new Vector3(x, 0.5f, z), Quaternion.identity);
+        rocks.Add(currentRock);
+        for (int i = 0; i < emptyBlocks.Count; i++)
+        {
+            if (emptyBlocks[i].getXLocation() == x && emptyBlocks[i].getZLocation() == z)
+            {
+                emptyBlocks.Remove(emptyBlocks[i]);
+                break;
+            }
+        }
     }
 
     bool checksForLegalRockSpawn()  // use recursion to check for rock spawn legality  <----- I think I just finished?????? try using it
@@ -377,6 +561,11 @@ public class GameController : MonoBehaviour
         floodCheck(x, z - 1);   // down
     }
    
+    public void itemCount()
+    {
+        currentItemNum++;
+    }
+
     //setters
     void setTimeLimit(float t)
     {
@@ -396,11 +585,6 @@ public class GameController : MonoBehaviour
     public void setNumOfLasers(int x)                       // sets the number of lasers to be fired at a time
     {
         numOfLasers = x;
-    }
-
-    public void setCountText(int count)                     // updates the item count text
-    {
-        countText.text = "Count: " + count.ToString();
     }
 
     public void setTimeBetweenLasers(float x)               // sets the duration time between laser blasts
@@ -428,5 +612,4 @@ public class GameController : MonoBehaviour
     {
         return level;
     }
-
 }
