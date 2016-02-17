@@ -1,0 +1,431 @@
+using UnityEngine;
+using UnityEngine.UI;
+using System.Collections;
+using System.Collections.Generic;           // for using list
+
+public class GameController : MonoBehaviour
+{
+    public TileType[] tileTypes;
+    public Text startText;
+    public Text countText;
+    public Text timerDisplay;
+    public GameObject pickUps;
+    public GameObject rock;
+    public GameObject[] players = new GameObject[1];
+
+    const int MAXROCKNUM = 35;  // 16 is perfect for the first level 
+
+    struct emptySpace
+    {
+        public emptySpace(int x, int z){ xLocation = x; zLocation = z; }
+        int xLocation;
+        int zLocation;
+        public int getXLocation() { return xLocation; }
+        public int getZLocation() { return zLocation; }
+    }
+
+    private float timeBetweenLasers;                // duration between the lasers
+    private float lazertimer = 0.0f;
+    private float timeLimit;
+    private float gameTimer;
+    private int level;
+    private int numOfLasers;
+    private int mapSizeX = 13;
+    private int mapSizeZ = 13;
+    private GameObject[] wall;                      // array of walls in the game
+    private GameObject[] rocks;                     // array of rocks in the game
+    private List<emptySpace> emptyBlocks=  new List<emptySpace>();
+    private bool firstItem;
+    private bool gameStart = false;
+
+    
+
+    int[,] wallTiles;       // 0:NorthWall 1: SouthWall 2:EastWall 3:WestWall 
+                            // 4: coner Rock == rock 5: Nothing 6: Rocks 7:item 8:player 9: (used for rockchecking)
+
+    // Use this for initialization
+    void Start()
+    {
+        setTimeLimit(30.0f);
+        gameTimer = getTimeLimit();
+        startText.text = "Press Spacebar to start!";
+        level = 1;
+        timeBetweenLasers = 4.0f;                   // duration between the lasers
+        firstItem = true;                           // flag for the first item to be put down
+        numOfLasers = 4;                            // number of lasers to be fired at a time
+        generateAllTiles();
+        generateWallTileVisual();
+        generateRocks(level);                       // Level one
+        generatePlayer();                           // creates player (always do this after generating rocks)
+        //showList();
+    }
+
+    void Update()
+    {
+        if(!gameStart && Input.GetKeyDown(KeyCode.Space))
+        {
+            startText.text = "";
+            setGameStart(true);
+        }
+        if (gameStart)
+        {
+            gameTimer -= Time.deltaTime;                                          // count down the game time
+            lazertimer += Time.deltaTime;
+            if (gameTimer <= 0f)                                                  // round over
+            {
+                destoryAllRocks();                                                   // reseting for next round
+                gameStart = false;
+                lazertimer = 0;
+                gameTimer = 0;
+                gameTimer = getTimeLimit();
+                startText.text = "Press Spacebar to start!";
+            }
+            displayTime();                                                      // displays time
+            if (lazertimer > timeBetweenLasers && gameStart)                                   // 4 seconds between the lasers
+            {
+                if (firstItem)
+                {
+                    firstItem = false;
+                    itemSpawn();
+                }
+                lazertimer = 0;
+                generateLasers(numOfLasers);
+            }
+        }
+    }
+
+    void generateAllTiles()                                // Generating the tile pieces
+    {
+        wallTiles = new int[(mapSizeX + 2), (mapSizeZ + 2)];
+
+        //Nothingness
+        for (int x = 1; x <= mapSizeX; x++){
+            for (int z = 1; z <= mapSizeZ; z++){
+                emptyBlocks.Add(new emptySpace(x, z));
+                wallTiles[x, z] = 5;
+            }
+        }
+        // N & S walls
+        for (int x = 1; x <= mapSizeX; x++)
+        {
+            //South Wall
+            wallTiles[x, 0] = 1;
+            //North Wall
+            wallTiles[x, mapSizeX + 1] = 0;
+        }
+
+        // E & W walls
+        for (int z = 1; z <= mapSizeZ; z++)
+        {
+            //West Wall
+            wallTiles[0, z] = 3;
+            //East Wall
+            wallTiles[mapSizeX + 1, z] = 2;
+        }
+
+        //coners
+        wallTiles[0, 0] = 4;
+        wallTiles[0, mapSizeZ + 1] = 4;
+        wallTiles[mapSizeX + 1, 0] = 4;
+        wallTiles[mapSizeX + 1, mapSizeZ + 1] = 4;
+    }
+
+    void generateWallTileVisual()                           // Generating all four walls plus the four coners
+    {
+        wall = new GameObject[(mapSizeX * 4)];
+        int i = 0;
+        for (int x = 0; x < mapSizeX + 2; x++){
+            for (int z = 0; z < mapSizeZ + 2; z++){
+                if (wallTiles[x, z] >= 0 && wallTiles[x, z] < 5){
+                    TileType tt = tileTypes[wallTiles[x, z]];
+                    GameObject currentWall = (GameObject)Instantiate(tt.tileVisualPrefab, new Vector3(x, 0.5f, z), Quaternion.identity);
+                    if (wallTiles[x, z] < 4){
+                        wall[i] = currentWall;
+                        i++;
+                    }
+                }
+            }
+        }
+    }
+
+    void generateLasers(int n)                              // generates n-number of Lasers at a time
+    {
+        while (n > 0)                           // making sure that Lasers don't overlap at a spawning points
+        {
+            int rand = Mathf.FloorToInt(Random.Range(0, wall.Length - 0.01f));
+            if (!wall[rand].GetComponent<WallScript>().getIsCharging())
+            {
+                wall[rand].GetComponent<WallScript>().setIsCharging(true);
+                n--;
+            }
+        }
+    }
+
+    void generateRocks(int level)                           // generates rocks depending on different level
+    {
+        if (level < 6)
+        {
+            rocks = new GameObject[MAXROCKNUM];
+            int i = 0;
+            while (i < MAXROCKNUM)                                                                    // spawn 10 rocks
+            {
+                int randomLocation = Mathf.FloorToInt(Random.Range(1, emptyBlocks.Count - 0.0001f));
+                emptySpace thisSpace = emptyBlocks[randomLocation];
+                if (wallTiles[thisSpace.getXLocation(), thisSpace.getZLocation()] == 5)                                                     // avoiding overlaps
+                {
+                    wallTiles[thisSpace.getXLocation(), thisSpace.getZLocation()] = 6;    // try putting the rock in this position
+                    if (checksForLegalRockSpawn())
+                    {        // check to see if it traps any space
+                        GameObject currentRock = (GameObject)Instantiate(rock, new Vector3(thisSpace.getXLocation(), 0.5f, thisSpace.getZLocation()), Quaternion.identity);
+                        rocks[i] = currentRock;
+                        emptyBlocks.Remove(thisSpace);
+                        i++;
+                    }
+                    else
+                    {
+                        wallTiles[thisSpace.getXLocation(), thisSpace.getZLocation()] = 5;        // if it does traps a space don't put the rock there
+                    }
+                }
+            }
+        }
+        /*
+        else if (level < 11)
+        {
+
+        }
+        else if (level < 16)
+        {
+
+        }
+        else if (level < 21)
+        {
+
+        }
+        else if (level < 26)
+        {
+
+        }
+        else if (level >= 26)
+        {
+
+        }
+    */
+    }
+    
+    void destoryAllRocks()
+    {
+        for(int i = 0; i < rocks.Length; i++)           // destroy all rocks
+            Destroy(rocks[i]);
+        rocks = new GameObject[0];
+
+        for (int x = 1; x <= mapSizeX; x++){              // resetting the wallTiles
+            for(int z = 1; z <= mapSizeZ; z++){
+                if (wallTiles[x, z] == 6){
+                    wallTiles[x, z] = 5;
+                }
+            }
+        }
+    }
+
+    void generatePlayer()                                   // always call this after generateRocks
+    {
+        bool playerPlaced = false;
+        for(int i = 0; i < players.Length; i++)
+        {
+            while (!playerPlaced)                                                                    // placing a player in the game world
+            {
+                int randomLocation = Mathf.FloorToInt(Random.Range(1, emptyBlocks.Count - 0.0001f));
+                emptySpace thisSpace = emptyBlocks[randomLocation];
+                if (wallTiles[thisSpace.getXLocation(), thisSpace.getZLocation()] == 5)                                                    // making sure that player doesn't overlap with rock
+                {
+                    wallTiles[thisSpace.getXLocation(), thisSpace.getZLocation()] = 8;
+                    Instantiate(players[i], new Vector3(thisSpace.getXLocation(), 0.5f, thisSpace.getZLocation()), Quaternion.identity);
+                    playerPlaced = true;
+                }
+            }
+            playerPlaced = false;
+        }
+    }
+    
+    //for debugging
+    void showList()
+    {
+        Debug.Log("List size : " + emptyBlocks.Count);
+        for(int i = 0; i < emptyBlocks.Count; i++)
+        {
+            Debug.Log("x =" + emptyBlocks[i].getXLocation() + "  z =" + emptyBlocks[i].getZLocation());
+        }
+    }
+
+    void resetBoard()                                       // resets the board
+    {
+        for (int x = 1; x <= mapSizeX; x++)
+            for (int z = 1; z <= mapSizeZ; z++)
+                wallTiles[x, z] = 5;                                            // resets all of the wallTiles
+        for (int i = 0; i < rocks.Length; i++)
+            rocks[i].GetComponent<RockScript>().destorySelf();                  // destorys all of the rocks
+    }
+    
+    public void itemSpawn()                                 // spawn an item on to the game world
+    {
+        float randx = Random.Range(1, 13f);
+        float randz = Random.Range(1, 13f);
+        bool isGoodLocation = false;
+        while (!isGoodLocation)                     // make sure not to over lap item with a rock
+        {
+            isGoodLocation = true;                  // so far the position is assumed to be good
+            for (int i = 0; i < rocks.Length; i++){
+                if (dist(rocks[i].transform.position.x, randx, rocks[i].transform.position.z, randz) < 1.2f){    // if an item is too close to a rock then exit
+                    isGoodLocation = false;
+                    break;
+                }
+            }
+            if (isGoodLocation){                                        // if the position is still good
+                for (int q = 0; q < players.Length; q++) {              // make sure to keep certain distance from the players
+                    if (dist(players[q].transform.position.x, randx, players[q].transform.position.z, randz) < 2.0f){
+                        isGoodLocation = false;
+                        break;
+                    }
+                }
+            }
+            else                                        // if the position is no good, try again with different position
+            {
+                randx = Random.Range(1, 13f);
+                randz = Random.Range(1, 13f);
+            }
+        }
+        Instantiate(pickUps, new Vector3(randx, 0.5f, randz), Quaternion.identity);                 // instantiates an item
+    }
+
+    float dist(float ax, float bx, float az, float bz)      // calculates the distance between two points
+    {
+        return Mathf.Sqrt(((ax - bx) * (ax - bx)) + ((az - bz) * (az - bz)));
+    }
+
+    void displayTime()
+    {
+        float seconds = gameTimer % 60;
+        float minutes = gameTimer / 60;
+        string timeStr;
+        if (gameTimer >= 60.0f)
+            timeStr = minutes.ToString("0") + ":" + seconds.ToString("00");
+        else
+            timeStr = seconds.ToString("F2");
+
+        timerDisplay.text = timeStr;
+    }
+
+    int generateGroupOfRocks(int amount, int x, int z) // return how many rocks actually generated !!!!!NOT FINISHED!!!!!!!!
+    {
+        bool isGood = true;
+        int currentX = x;
+        int currentz = z;
+        int generatedRocks = 0;
+        int direction = Mathf.FloorToInt(Random.Range(0, 5 - 0.00001f)); // 0=N 1=E 2=S 3=W
+        while (isGood || generatedRocks == amount){
+            // I'm confused
+        }
+        
+        return generatedRocks;
+    }
+
+    bool checksForLegalRockSpawn()  // use recursion to check for rock spawn legality  <----- I think I just finished?????? try using it
+    {
+        int x = 0;
+        int z = 0;
+        bool found = false;
+        for (int a = 1; a <= mapSizeX; a++){            // looking for the first occurance of "nothing"
+            for (int b = 1; b <= mapSizeZ; b++){
+                if(wallTiles[a,b] == 5)
+                {
+                    x = a;
+                    z = b;
+                    found = true;
+                    break;
+                }
+            }
+            if (found)
+                break;
+        }
+
+        floodCheck(x, z);                               // flood fills all connected
+        int totalNumberOfNothing = 0;
+        int connectedNothings = 0;
+        for (int a = 1; a <= mapSizeX; a++) {            // counts the number of inverted "Nothing"
+            for (int b = 1; b <= mapSizeZ; b++) {
+                if (wallTiles[a, b] == 5)
+                    totalNumberOfNothing++;
+                if (wallTiles[a, b] == 9){
+                    connectedNothings++;
+                    totalNumberOfNothing++;
+                    wallTiles[a, b] = 5;                // turns 9's back to nothing
+                }
+            }
+        }
+        return (connectedNothings == totalNumberOfNothing);
+    }
+
+    void floodCheck(int x, int z)
+    {
+        if (wallTiles[x, z] != 5) // 5: nothing thus, stop if it is not a nothing
+            return;
+        wallTiles[x, z] = 9;      // if it is nothing, make it NOT a nothing (9)
+        floodCheck(x + 1, z);   // right
+        floodCheck(x - 1, z);   // left
+        floodCheck(x, z + 1);   // up
+        floodCheck(x, z - 1);   // down
+    }
+   
+    //setters
+    void setTimeLimit(float t)
+    {
+        timeLimit = t;
+    }
+
+    void setGameStart(bool x)                               // sets flag that will start the game
+    {
+        gameStart = x;
+    }
+
+    public void setFirstItem()                              // sets the flag up to place a first item of a level
+    {
+        firstItem = true;
+    }
+
+    public void setNumOfLasers(int x)                       // sets the number of lasers to be fired at a time
+    {
+        numOfLasers = x;
+    }
+
+    public void setCountText(int count)                     // updates the item count text
+    {
+        countText.text = "Count: " + count.ToString();
+    }
+
+    public void setTimeBetweenLasers(float x)               // sets the duration time between laser blasts
+    {
+        timeBetweenLasers = x;
+    }
+
+    public void setLevel(int x)                             // sets the level of the game
+    {
+        level = x;
+    }
+
+    //getters
+    float getTimeLimit()
+    {
+        return timeLimit;
+    }
+
+    bool getGameStart()
+    {
+        return gameStart;
+    }
+
+    public int getLevel()                                   // returns the level of the game
+    {
+        return level;
+    }
+
+}
